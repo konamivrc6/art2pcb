@@ -48,10 +48,11 @@ def choose_colors():
     print("=" * 50)
 
     while True:
-        choice = input("请选择 (0-7): ").strip()
-        if choice in [str(i) for i in range(8)]:
+        max_id = len(PRESETS)
+        choice = input(f"请选择 (0-{max_id}): ").strip()
+        if choice in [str(i) for i in range(max_id + 1)]:
             break
-        print("[错误] 请输入 0-7 之间的数字")
+        print(f"[错误] 请输入 0-{max_id} 之间的数字")
 
     choice = int(choice)
 

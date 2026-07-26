@@ -1,0 +1,44 @@
+[
+  {
+    "id": 1,
+    "name": "绿色",
+    "DSolder": "#186931",
+    "LSolder": "#29793B"
+  },
+  {
+    "id": 2,
+    "name": "红色",
+    "DSolder": "#9B0300",
+    "LSolder": "#E20306"
+  },
+  {
+    "id": 3,
+    "name": "黄色",
+    "DSolder": "#C0A70D",
+    "LSolder": "#F8A100"
+  },
+  {
+    "id": 4,
+    "name": "蓝色",
+    "DSolder": "#002B6B",
+    "LSolder": "#0061BE"
+  },
+  {
+    "id": 5,
+    "name": "白色",
+    "DSolder": "#FFFFFF",
+    "LSolder": "#F5F5F5"
+  },
+  {
+    "id": 6,
+    "name": "黑色",
+    "DSolder": "#111111",
+    "LSolder": "#000000"
+  },
+  {
+    "id": 7,
+    "name": "紫色",
+    "DSolder": "#1A001F",
+    "LSolder": "#80095A"
+  }
+]

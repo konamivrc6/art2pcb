@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import cv2
 import numpy as np
@@ -82,6 +83,18 @@ def choose_colors():
 # 主流程
 # ============================================================
 def main():
+    # --- 支持拖放文件 / 命令行传参 ---
+    if len(sys.argv) > 1:
+        input_path = sys.argv[1]
+        print(f"输入文件: {os.path.basename(input_path)}")
+    else:
+        for candidate in ("origin.png", "origin.jpg", "input.jpg", "input.png"):
+            if os.path.isfile(candidate):
+                input_path = candidate
+                break
+        else:
+            input_path = "origin.png"  # 都不存在时走这里，后面 imread 会报错
+
     hexColors = choose_colors()
 
     print("\n当前颜色配置:")
@@ -97,9 +110,9 @@ def main():
     colors = {color: hex_to_BGR(value) for color, value in hexColors.items()}
 
     # 读取图像
-    image = cv2.imread("origin.png")
+    image = cv2.imread(input_path)
     if image is None:
-        print("\n[错误] 找不到 origin.png，请将原图放在当前目录下。")
+        print(f"\n[错误] 找不到图片文件: {input_path}")
         return
 
     print(f"\n处理中... (图像尺寸: {image.shape[1]} x {image.shape[0]})")

@@ -8,6 +8,18 @@
 原理:
     对每个像素，用 K×K 邻域内出现次数最多的颜色替换它。
     细线（1-3px）会被周围的主导颜色"投票投掉"，且不会产生新的中间色。
+
+交互操作:
+    鼠标左键点击  — 放置矩形选区顶点（点两个对角顶点）
+    鼠标右键      — 取消当前选区
+    鼠标移动      — 实时预览选区矩形
+    A             — 选区设为全图
+    0-9           — 输入窗口大小（如 5 = 5×5）
+    Enter         — 执行众数滤波
+    Tab           — 切换 HUD 显示/隐藏
+    R             — 撤销滤波，回到原始图像
+    S             — 保存图像（覆盖原文件）
+    Esc           — 退出
 """
 
 import os
@@ -119,6 +131,43 @@ def load_palette(path="./01/palette.json"):
     return {name: hex_to_BGR(value) for name, value in hexColors.items()}
 
 
+# ── GUI 常量 ──────────────────────────────────────────────────────────────
+WIN_NAME = "Mode Filter"
+DISP_MAX_W = 1200
+DISP_MAX_H = 800
+OVERLAY_ALPHA = 0.35       # 选区矩形半透明度
+OVERLAY_COLOR = (0, 255, 255)  # 黄色预览框
+OVERLAY_DONE = (0, 255, 0)     # 绿色已确认选区
+HINT_FONT = cv2.FONT_HERSHEY_SIMPLEX
+
+
+def _draw_hud(disp, scale, pts, kernel_str, status_text, has_filtered):
+    """在显示图上叠加 HUD 文字。"""
+    hints = [
+        "[Click] ROI   [A] Full   [RClick] Clear",
+        "[0-9] Size   [Enter] Apply   [Tab] HUD",
+        "[R] UndoAll   [Z] Undo   [S] Save   [Esc] Quit",
+    ]
+    lines = hints + [""]
+
+    if pts:
+        lines.append(f"Selection: {pts[0]} -> {pts[1]}" if len(pts) == 2
+                      else f"P1: {pts[0]}")
+    if kernel_str:
+        lines.append(f"Window size: {kernel_str}")
+    lines.append(status_text)
+
+    (_, text_h), baseline = cv2.getTextSize("X", HINT_FONT, 0.5, 1)
+    line_h = text_h + baseline + 6
+    y = line_h
+    for line in lines:
+        cv2.putText(disp, line, (11, y + 1), HINT_FONT, 0.5, (0, 0, 0), 1,
+                    cv2.LINE_AA)
+        cv2.putText(disp, line, (10, y), HINT_FONT, 0.5, (255, 255, 255), 1,
+                    cv2.LINE_AA)
+        y += line_h
+
+
 def main():
     # --- 确定输入文件 ---
     if len(sys.argv) > 1:
@@ -135,7 +184,6 @@ def main():
     # --- 读取调色板 ---
     palette_dir = os.path.join(os.path.dirname(input_path) or ".", "palette.json")
     if not os.path.isfile(palette_dir):
-        # 如果图片旁边没有 palette.json，尝试 01/ 目录
         palette_dir = "./01/palette.json"
 
     if not os.path.isfile(palette_dir):
@@ -152,46 +200,174 @@ def main():
         print(f"[错误] 无法读取图片: {input_path}")
         return
 
+    original = image.copy()
+    current = image.copy()
     h, w = image.shape[:2]
-    print(f"图像尺寸: {w} × {h}")
 
-    # --- 交互式选择窗口大小 ---
-    print("\n" + "=" * 50)
-    print("  众数滤波 — 窗口大小")
-    print("=" * 50)
-    print("  0      — 退出（不做处理）")
-    print("  3      — 3×3 窗口（轻度，去 1px 细线）")
-    print("  5      — 5×5 窗口（推荐，去 2-3px 细线）")
-    print("  7      — 7×7 窗口（激进）")
-    print("  更大奇数 — 更激进")
-    print("=" * 50)
+    # 显示缩放
+    scale = min(DISP_MAX_W / w, DISP_MAX_H / h, 1.0)
+    disp_w, disp_h = int(w * scale), int(h * scale)
 
+    # ── 交互状态 ──
+    pts = []            # ROI 选区顶点
+    kernel_str = ""     # 用户键入的窗口大小字符串
+    status = "Click to select ROI, type window size, then Enter"
+    show_hud = True     # Tab 切换 HUD 显示
+    has_filtered = False
+    mouse_xy = (-1, -1)  # 当前鼠标在显示图中的坐标
+    undo_stack = []     # Z 键撤销历史（最多 2 步）
+
+    cv2.namedWindow(WIN_NAME, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(WIN_NAME, disp_w, disp_h)
+
+    # ── 鼠标回调 ──
+    def on_mouse(event, mx, my, flags, param):
+        nonlocal pts, kernel_str
+        if event == cv2.EVENT_LBUTTONDOWN:
+            # 转回图像像素坐标
+            ix = int(round(mx / scale))
+            iy = int(round(my / scale))
+            ix = max(0, min(w - 1, ix))
+            iy = max(0, min(h - 1, iy))
+            if len(pts) == 2:
+                # 已有选区 → 重新开始，替换第一个点
+                pts = [(ix, iy)]
+                kernel_str = ""
+            else:
+                pts.append((ix, iy))
+                if len(pts) == 2:
+                    kernel_str = ""
+        elif event == cv2.EVENT_RBUTTONDOWN:
+            pts = []
+            kernel_str = ""
+        elif event == cv2.EVENT_MOUSEMOVE:
+            nonlocal mouse_xy
+            mouse_xy = (mx, my)
+
+    cv2.setMouseCallback(WIN_NAME, on_mouse)
+
+    # ── 主循环 ──
     while True:
-        choice = input("请选择: ").strip()
-        if choice == "" or choice == "0":
-            print("已取消")
-            return
-        if choice.isdigit():
-            val = int(choice)
-            if val >= 3 and val % 2 == 1:
-                kernel_size = val
-                break
-        print("[错误] 请输入 0 或 ≥3 的奇数")
+        # 构建显示图
+        disp_small = cv2.resize(current, (disp_w, disp_h), interpolation=cv2.INTER_NEAREST)
+        disp = disp_small.copy()
 
-    # --- 众数滤波 ---
-    print(f"\n众数滤波: 窗口 {kernel_size}×{kernel_size} ...")
-    filtered = mode_filter(image, colors, kernel_size)
+        # 画选区矩形预览
+        if len(pts) == 1:
+            # 一个点已定，跟随鼠标画矩形
+            px1, py1 = pts[0]
+            px2 = int(round(mouse_xy[0] / scale))
+            py2 = int(round(mouse_xy[1] / scale))
+            # 转为显示坐标
+            d_x1, d_y1 = int(px1 * scale), int(py1 * scale)
+            d_x2, d_y2 = int(px2 * scale), int(py2 * scale)
+            overlay = disp.copy()
+            cv2.rectangle(overlay, (d_x1, d_y1), (d_x2, d_y2), OVERLAY_COLOR, -1)
+            cv2.addWeighted(overlay, OVERLAY_ALPHA, disp, 1 - OVERLAY_ALPHA, 0, disp)
+            cv2.rectangle(disp, (d_x1, d_y1), (d_x2, d_y2), OVERLAY_COLOR, 1)
+        elif len(pts) == 2:
+            px1, py1 = pts[0]
+            px2, py2 = pts[1]
+            d_x1, d_y1 = int(px1 * scale), int(py1 * scale)
+            d_x2, d_y2 = int(px2 * scale), int(py2 * scale)
+            overlay = disp.copy()
+            cv2.rectangle(overlay, (d_x1, d_y1), (d_x2, d_y2), OVERLAY_DONE, -1)
+            cv2.addWeighted(overlay, OVERLAY_ALPHA, disp, 1 - OVERLAY_ALPHA, 0, disp)
+            cv2.rectangle(disp, (d_x1, d_y1), (d_x2, d_y2), OVERLAY_DONE, 1)
 
-    # --- 预览 ---
-    cv2.namedWindow("Mode Filter", cv2.WINDOW_NORMAL)
-    cv2.resizeWindow("Mode Filter", 600, 400)
-    cv2.imshow("Mode Filter", filtered)
-    cv2.waitKey(0)
+        # HUD
+        if show_hud:
+            _draw_hud(disp, scale, pts, kernel_str, status, has_filtered)
+        cv2.imshow(WIN_NAME, disp)
+
+        key = cv2.waitKey(30) & 0xFF
+        if key == 0xFF:
+            key = -1  # 无按键
+
+        # 窗口被关闭（点击 X）→ 直接退出
+        if cv2.getWindowProperty(WIN_NAME, cv2.WND_PROP_VISIBLE) < 1:
+            break
+
+        # ── 按键处理 ──
+        if key == 27:  # Esc
+            break
+
+        elif key in (ord('s'), ord('S')):  # 保存
+            cv2.imwrite(input_path, current)
+            status = f"Saved: {os.path.basename(input_path)}"
+            has_filtered = False  # 保存后基线更新
+            original = current.copy()
+            pts = []
+            kernel_str = ""
+            undo_stack.clear()
+            print(f"已保存: {input_path}")
+
+        elif key == 9:  # Tab — 切换 HUD
+            show_hud = not show_hud
+
+        elif key in (ord('a'), ord('A')):  # 全选
+            pts = [(0, 0), (w - 1, h - 1)]
+            kernel_str = ""
+            status = "ROI set to full image"
+
+        elif key in (ord('r'), ord('R')):  # 撤销全部
+            current = original.copy()
+            has_filtered = False
+            pts = []
+            kernel_str = ""
+            undo_stack.clear()
+            status = "Reverted to original"
+
+        elif key in (ord('z'), ord('Z')):  # 单步撤销
+            if undo_stack:
+                current = undo_stack.pop()
+                has_filtered = len(undo_stack) > 0
+                status = f"Undo ({len(undo_stack)} remaining)"
+            else:
+                status = "Nothing to undo"
+
+        elif ord('0') <= key <= ord('9'):
+            kernel_str += chr(key)
+            status = f"Window: {kernel_str} (Enter to apply)"
+
+        elif key == 8 or key == 127:  # Backspace / Delete
+            kernel_str = kernel_str[:-1]
+            status = f"Window: {kernel_str}" if kernel_str else ""
+
+        elif key == 13:  # Enter — 执行滤波
+            if not kernel_str:
+                status = "No window size entered"
+                continue
+            ksize = int(kernel_str)
+            if ksize < 3 or ksize % 2 == 0:
+                status = f"Invalid: {ksize} (need odd >= 3)"
+                continue
+
+            # 保存当前状态到撤销栈（最多 2 步）
+            undo_stack.append(current.copy())
+            if len(undo_stack) > 2:
+                undo_stack.pop(0)
+
+            if len(pts) == 2:
+                px1, py1 = pts[0]
+                px2, py2 = pts[1]
+                rx1 = min(px1, px2) / w
+                ry1 = min(py1, py2) / h
+                rx2 = max(px1, px2) / w
+                ry2 = max(py1, py2) / h
+                roi = (rx1, ry1, rx2, ry2)
+                current = mode_filter(current, colors, ksize, roi=roi)
+                status = f"Applied {ksize}x{ksize} to ROI ({rx1:.3f}, {ry1:.3f})-({rx2:.3f}, {ry2:.3f})"
+            else:
+                current = mode_filter(current, colors, ksize)
+                status = f"Applied {ksize}x{ksize} to full image"
+
+            has_filtered = True
+            pts = []
+            kernel_str = ""
+            print(status)
+
     cv2.destroyAllWindows()
-
-    # --- 保存（覆盖原图）---
-    cv2.imwrite(input_path, filtered)
-    print(f"已保存: {input_path}")
 
 
 if __name__ == "__main__":

@@ -23,9 +23,9 @@ def hex_to_BGR(hex_color):
     return np.array([int(hex_color[i:i + 2], 16) for i in (4, 2, 0)])
 
 
-def mode_filter(image, color_dict, kernel_size):
+def _mode_filter_core(image, color_dict, kernel_size):
     """
-    众数滤波：用 K×K 窗口内出现次数最多的颜色替换每个像素。
+    众数滤波核心：对整张图做 K×K 窗口众数滤波（BORDER_REPLICATE 处理边缘）。
 
     image:      量化后的 BGR 图像
     color_dict: {name: BGR array}
@@ -36,8 +36,7 @@ def mode_filter(image, color_dict, kernel_size):
 
     h, w = image.shape[:2]
     if h < kernel_size or w < kernel_size:
-        print(f"  [跳过滤波] 图像尺寸 ({w}×{h}) < 窗口 ({kernel_size}×{kernel_size})")
-        return image
+        return image  # 太小，跳过
 
     color_names = list(color_dict.keys())
     color_bgrs = [color_dict[name] for name in color_names]
@@ -60,6 +59,56 @@ def mode_filter(image, color_dict, kernel_size):
     for i in range(len(color_names)):
         result[best_idx == i] = color_bgrs[i]
 
+    return result
+
+
+def mode_filter(image, color_dict, kernel_size, roi=None):
+    """
+    众数滤波：用 K×K 窗口内出现次数最多的颜色替换每个像素。
+
+    image:      量化后的 BGR 图像
+    color_dict: {name: BGR array}
+    kernel_size: 窗口边长（奇数，如 5）
+    roi:        可选，(x1, y1, x2, y2)，均为 0.0~1.0 的相对坐标。
+                指定时仅滤波该矩形区域；区域边界像素会依赖外部像素，
+                结果等价于全图滤波后裁出该区域。
+    """
+    h, w = image.shape[:2]
+
+    if roi is None:
+        return _mode_filter_core(image, color_dict, kernel_size)
+
+    x1, y1, x2, y2 = roi
+    # 相对坐标 → 像素坐标
+    px1 = max(0, int(round(x1 * w)))
+    py1 = max(0, int(round(y1 * h)))
+    px2 = min(w, int(round(x2 * w)))
+    py2 = min(h, int(round(y2 * h)))
+
+    # 确保选区有效
+    if px1 >= px2 or py1 >= py2:
+        raise ValueError(f"无效 ROI: ({x1},{y1})-({x2},{y2}) → 像素 ({px1},{py1})-({px2},{py2})")
+
+    # 扩展提取区域，使边界像素的邻域窗口能覆盖原图外部像素
+    radius = kernel_size // 2
+    ex1 = max(0, px1 - radius)
+    ey1 = max(0, py1 - radius)
+    ex2 = min(w, px2 + radius)
+    ey2 = min(h, py2 + radius)
+
+    expanded = image[ey1:ey2, ex1:ex2]
+    filtered_expanded = _mode_filter_core(expanded, color_dict, kernel_size)
+
+    # 从扩展结果中裁出原始 ROI 区域
+    roi_h = py2 - py1
+    roi_w = px2 - px1
+    crop_y1 = py1 - ey1
+    crop_x1 = px1 - ex1
+    filtered_roi = filtered_expanded[crop_y1:crop_y1 + roi_h, crop_x1:crop_x1 + roi_w]
+
+    # 贴回原图
+    result = image.copy()
+    result[py1:py2, px1:px2] = filtered_roi
     return result
 
 

@@ -28,8 +28,8 @@ LAYERS = {
         "invert": False,
     },
     "topSolder": {
-        "parts": ["dark_solder", "light_solder", "white", "black"],
-        "describe": "正面阻焊层 (深阻焊+浅阻焊+白+黑, 负片)",
+        "parts": ["dark_solder", "light_solder", "white"],
+        "describe": "正面阻焊层 (有阻焊区域取反=开窗, 负片)",
         "invert": True,
     },
     "topText": {
@@ -38,14 +38,14 @@ LAYERS = {
         "invert": False,
     },
     "bottomCu": {
-        "parts": ["deep_green", "light_yellow"],
-        "describe": "背面铜皮层 (深绿+浅黄)",
-        "invert": False,
+        "parts": ["light_yellow"],
+        "describe": "背面铜皮层 (除浅黄外均有铜)",
+        "invert": True,
     },
     "bottomSolder": {
-        "parts": ["deep_green"],
-        "describe": "背面阻焊层 (深绿, 负片)",
-        "invert": True,
+        "parts": ["light_yellow"],
+        "describe": "背面阻焊层 (浅黄, 负片: 白=开窗)",
+        "invert": False,
     },
 }
 
